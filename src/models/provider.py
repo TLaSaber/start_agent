@@ -10,6 +10,15 @@ class ModelInfo(BaseModel):
     capabilities: list[str] = []
 
 
+class ProviderConfig(BaseModel):
+    api_base: str
+    api_key: str
+    default_model: str
+    temperature: float = 0.7
+    max_output_tokens: int = 4096
+    available_models: list[ModelInfo] = []
+
+
 class ModelProvider(ABC):
     @abstractmethod
     def get_chat_model(self, model_name: str | None = None) -> BaseChatModel:
