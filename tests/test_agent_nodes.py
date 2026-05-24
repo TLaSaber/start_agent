@@ -54,3 +54,42 @@ def test_format_recalled_memories_empty():
     from src.agent.nodes.observe import format_recalled_memories
     text = format_recalled_memories([])
     assert "暂无" in text
+
+
+def test_parse_llm_response_direct_answer():
+    from src.agent.nodes.think import parse_llm_response
+    from langchain_core.messages import AIMessage
+
+    ai_msg = AIMessage(content="这是最终答案。", tool_calls=[])
+    result = parse_llm_response(ai_msg)
+    assert result["final_answer"] == "这是最终答案。"
+    assert result["tool_calls"] == []
+
+
+def test_parse_llm_response_tool_calls():
+    from src.agent.nodes.think import parse_llm_response
+    from langchain_core.messages import AIMessage
+
+    ai_msg = AIMessage(
+        content="",
+        tool_calls=[{"name": "read_file", "args": {"path": "/tmp/test.txt"}, "id": "call_1"}],
+    )
+    result = parse_llm_response(ai_msg)
+    assert result["final_answer"] is None
+    assert len(result["tool_calls"]) == 1
+    assert result["tool_calls"][0]["name"] == "read_file"
+
+
+def test_should_archive_user_command():
+    from src.agent.nodes.think import detect_archive_triggers
+
+    triggers = detect_archive_triggers("请记住，我偏好使用 tab 缩进")
+    assert len(triggers) >= 1
+    assert any("tab 缩进" in t["content"] for t in triggers)
+
+
+def test_should_archive_no_trigger():
+    from src.agent.nodes.think import detect_archive_triggers
+
+    triggers = detect_archive_triggers("帮我读一下 README.md 文件")
+    assert len(triggers) == 0
