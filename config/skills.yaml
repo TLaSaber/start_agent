@@ -1,0 +1,13 @@
+skills:
+  - name: "code-review"
+    summary: "对代码变更进行审查，输出问题和改进建议"
+    tools: ["read_file", "grep_content", "search_file"]
+    constraints:
+      - "不得修改任何文件"
+      - "不得执行代码"
+
+  - name: "data-analyze"
+    summary: "分析结构化数据文件（CSV/JSON/Excel），输出统计报告和可视化建议"
+    tools: ["read_file", "list_dir", "exec_shell"]
+    constraints:
+      - "仅读取数据，不修改源文件"
