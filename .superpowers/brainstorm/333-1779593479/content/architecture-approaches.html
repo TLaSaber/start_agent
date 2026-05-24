@@ -1,0 +1,117 @@
+<h2>Agent Loop 架构方案对比</h2>
+<p class="subtitle">三种方式将 LangGraph 与 Agent Loop 结合，各有侧重</p>
+
+<div class="options" data-multiselect>
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>LangGraph 全图驱动（推荐）</h3>
+      <p>整个 Agent Loop 是一条 LangGraph StateGraph。Observe / Think / Act 各为一个 Node，Tool 调用和 HITL 通过 conditional edge 路由。LangGraph 原生 checkpoint 做会话持久化。</p>
+      <div class="mockup">
+        <div class="mockup-header">架构草图 — 全图驱动</div>
+        <div class="mockup-body">
+          <pre style="font-size:12px;line-height:1.6;margin:0">
+┌──────────────────────────────────┐
+│         FastAPI Router           │
+│   POST /chat  →  graph.ainvoke  │
+└──────────────┬───────────────────┘
+               │
+┌──────────────▼───────────────────┐
+│     LangGraph StateGraph         │
+│                                  │
+│  ┌──────────┐                    │
+│  │ Observe  │←──────────────┐   │
+│  │ (注入上下文│               │   │
+│  │  记忆召回)│               │   │
+│  └────┬─────┘               │   │
+│       ▼                      │   │
+│  ┌──────────┐    ┌───────┐  │   │
+│  │  Think   │───→│ Route │  │   │
+│  │ (LLM推理)│    └──┬─┬──┘  │   │
+│  └──────────┘       │  │     │   │
+│          工具调用    │  │完成  │   │
+│                     ▼  │     │   │
+│              ┌────────┐ │     │   │
+│              │  Act   │ │     │   │
+│              │(执行工具)│ │     │   │
+│              └───┬────┘ │     │   │
+│                  │      │     │   │
+│                  └──────┘     │   │
+│                               │   │
+│  ┌──────────────────────────┐│   │
+│  │  END (返回最终结果)       │◄───┘   │
+│  └──────────────────────────┘        │
+└──────────────────────────────────────┘
+          </pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Service 层编排 + LangGraph 子图</h3>
+      <p>Agent Loop 由 Python 应用代码（AgentService）控制循环，LangGraph 仅作为 Think 阶段的"推理子图"被调用。循环逻辑在业务层，图只负责一次推理+工具选择。</p>
+      <div class="mockup">
+        <div class="mockup-header">架构草图 — Service 编排</div>
+        <div class="mockup-body">
+          <pre style="font-size:12px;line-height:1.6;margin:0">
+┌────────────────────────────────────┐
+│          FastAPI Router            │
+│    POST /chat  →  AgentService    │
+└──────────────┬─────────────────────┘
+               │
+┌──────────────▼─────────────────────┐
+│       AgentService (while loop)    │
+│                                    │
+│  while not done:                   │
+│    ├─ Observe(加载上下文,记忆召回)  │
+│    ├─ Think() ─────┐              │
+│    ├─ Act(执行工具) │              │
+│    └─ 判断是否继续   │              │
+│                    ▼              │
+│           ┌──────────────────┐    │
+│           │ LangGraph 推理子图│    │
+│           │ (LLM + Tool选择) │    │
+│           └──────────────────┘    │
+└────────────────────────────────────┘
+          </pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>LangGraph create_react_agent 直用</h3>
+      <p>直接用 LangGraph 内置的 create_react_agent，在它前后加 preprocess/postprocess 钩子。最简最快，但扩展性受限于 ReAct 模式。</p>
+      <div class="mockup">
+        <div class="mockup-header">架构草图 — ReAct 直用</div>
+        <div class="mockup-body">
+          <pre style="font-size:12px;line-height:1.6;margin:0">
+┌─────────────────────────────────┐
+│        FastAPI Router           │
+│  POST /chat → preprocess →     │
+│  react_agent → postprocess     │
+└──────────────┬──────────────────┘
+               │
+┌──────────────▼──────────────────┐
+│   Preprocess (记忆召回,上下文)    │
+└──────────────┬──────────────────┘
+               ▼
+┌──────────────────────────────────┐
+│  LangGraph create_react_agent   │
+│  (ToolNode + ModelNode 内置循环) │
+└──────────────┬──────────────────┘
+               ▼
+┌──────────────────────────────────┐
+│   Postprocess (归档判断,响应组装) │
+└──────────────────────────────────┘
+          </pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

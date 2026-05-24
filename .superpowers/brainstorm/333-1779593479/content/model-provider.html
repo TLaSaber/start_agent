@@ -1,0 +1,147 @@
+<h2>模型防腐层</h2>
+<p class="subtitle">ModelProvider 抽象 · OpenAI 兼容协议 · 配置驱动切换 · 主/专家模型独立</p>
+
+<h3>1. 核心设计</h3>
+<div class="section">
+  <p>DeepSeek API 本身就是 <strong>OpenAI 兼容协议</strong>，后续接任何 OpenAI 兼容的模型提供商只需改配置，不用改代码。我们基于 LangChain 的 <code>BaseChatModel</code> 做一层薄封装，统一异步调用、token 统计、错误转译。</p>
+</div>
+
+<h3>2. ModelProvider 接口</h3>
+<div class="mockup">
+  <div class="mockup-header">抽象接口</div>
+  <div class="mockup-body">
+    <pre style="font-size:12px;line-height:1.6;margin:0">
+class ModelProvider(ABC):
+    """模型提供者抽象"""
+
+    @abstractmethod
+    def get_chat_model(self, model_name: str | None = None) -> BaseChatModel:
+        """返回 LangChain 兼容的 chat model 实例"""
+        ...
+
+    @abstractmethod
+    def get_available_models(self) -> list[ModelInfo]:
+        """列出可用模型"""
+        ...
+
+    @abstractmethod
+    def count_tokens(self, text: str, model: str | None = None) -> int:
+        """估算 token 数 (用于 compact 判断)"""
+        ...
+
+class ModelInfo(BaseModel):
+    name: str                        # "deepseek-v3"
+    provider: str                    # "deepseek"
+    max_tokens: int                  # 上下文窗口大小
+    capabilities: list[str]          # ["chat", "function_calling", "json_mode"]
+    </pre>
+  </div>
+</div>
+
+<h3>3. DeepSeek + OpenAI 兼容实现</h3>
+<div class="mockup">
+  <div class="mockup-header">OpenAI 兼容实现 (DeepSeek / OpenAI / 任何兼容服务)</div>
+  <div class="mockup-body">
+    <pre style="font-size:12px;line-height:1.6;margin:0">
+class OpenAICompatProvider(ModelProvider):
+    """通过 OpenAI 兼容协议对接任何模型服务"""
+
+    def __init__(self, config: ProviderConfig):
+        self.config = config
+        # config.api_base → "https://api.deepseek.com/v1"
+        # config.api_key  → from env
+        self._clients: dict[str, ChatOpenAI] = {}
+
+    def get_chat_model(self, model_name: str | None = None) -> ChatOpenAI:
+        name = model_name or self.config.default_model
+        if name not in self._clients:
+            self._clients[name] = ChatOpenAI(
+                model=name,
+                api_key=self.config.api_key,
+                base_url=self.config.api_base,
+                temperature=self.config.temperature,
+                max_tokens=self.config.max_output_tokens,
+            )
+        return self._clients[name]
+
+    def count_tokens(self, text: str, model: str | None = None) -> int:
+        # 使用 tiktoken 编码器近似估算
+        encoding = tiktoken.encoding_for_model(model or "gpt-4")
+        return len(encoding.encode(text))
+    </pre>
+  </div>
+</div>
+
+<h3>4. 配置驱动切换</h3>
+<div class="mockup">
+  <div class="mockup-header">config/model.yaml</div>
+  <div class="mockup-body">
+    <pre style="font-size:12px;line-height:1.6;margin:0">
+providers:
+  deepseek:
+    type: openai_compat
+    api_base: "${DEEPSEEK_API_BASE}"
+    api_key: "${DEEPSEEK_API_KEY}"
+    default_model: "deepseek-v3"
+    available_models:
+      - name: "deepseek-v3"
+        max_tokens: 65536
+        capabilities: [chat, function_calling]
+      - name: "deepseek-r1"
+        max_tokens: 65536
+        capabilities: [chat, function_calling]
+
+  # 后续接入示例：
+  # openai:
+  #   type: openai_compat
+  #   api_base: "https://api.openai.com/v1"
+  #   api_key: "${OPENAI_API_KEY}"
+  #   default_model: "gpt-4o"
+
+# 主智能体 & 专家智能体可以指定不同模型
+routing:
+  main_agent:
+    provider: deepseek
+    model: deepseek-v3
+  experts:
+    code-review:
+      provider: deepseek
+      model: deepseek-v3
+    </pre>
+  </div>
+</div>
+
+<h3>5. LangGraph 集成方式</h3>
+<div class="section">
+  <p>在 Think 节点中，通过 <code>model_provider.get_chat_model()</code> 获取实例，绑定 tools schema 后调用：</p>
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">Think 节点中调用 LLM</div>
+  <div class="mockup-body">
+    <pre style="font-size:12px;line-height:1.6;margin:0">
+async def think_node(state: AgentState, config: RunnableConfig):
+    provider = get_model_provider()  # 从 DI 容器获取
+    model = provider.get_chat_model()
+
+    # 绑定 tools (由 ToolRegistry 提供)
+    tool_schemas = tool_registry.get_llm_tools()
+    model_with_tools = model.bind_tools(tool_schemas)
+
+    # 调用 LLM
+    response = await model_with_tools.ainvoke(state["messages"])
+
+    # 解析响应: answer or tool_calls
+    return parse_llm_response(response)
+    </pre>
+  </div>
+</div>
+
+<h3>6. 防腐层的价值</h3>
+<div class="pros-cons">
+  <div class="pros"><h4>换模型只需要</h4><ul>
+    <li>在 model.yaml 加一个 provider 配置</li>
+    <li>改 routing 指向新模型</li>
+    <li>Agent Loop 代码零改动</li>
+  </ul></div>
+</div>
