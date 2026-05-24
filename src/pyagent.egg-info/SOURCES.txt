@@ -1,7 +1,0 @@
-pyproject.toml
-src/__init__.py
-src/pyagent.egg-info/PKG-INFO
-src/pyagent.egg-info/SOURCES.txt
-src/pyagent.egg-info/dependency_links.txt
-src/pyagent.egg-info/requires.txt
-src/pyagent.egg-info/top_level.txt

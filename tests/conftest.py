@@ -8,7 +8,8 @@ os.environ.setdefault("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1")
 
 
 @pytest.fixture
-def temp_db_path():
+def raw_db_path():
+    """Provide a raw temp db path without schema (tests create their own schema)."""
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         yield f.name
     Path(f.name).unlink(missing_ok=True)
