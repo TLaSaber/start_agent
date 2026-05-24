@@ -1,5 +1,7 @@
 from langchain_core.messages import SystemMessage
 from src.agent.state import AgentState
+from src.agent.compact import should_compact, compact_messages, estimate_messages_tokens
+from config.settings import COMPACT_THRESHOLD_RATIO, COMPACT_KEEP_RECENT
 
 
 SYSTEM_PROMPT_BASE = """你是一个通用的 AI 助手。你可以使用工具来完成用户的任务。
@@ -41,6 +43,16 @@ async def observe_node(state: AgentState, config: dict = None) -> dict:
     messages = state.get("messages", [])
     compact_summary = state.get("compact_summary")
     recalled = state.get("recalled_memories", [])
+    result = {}
+
+    # Check if compaction is needed before system prompt injection
+    if should_compact(messages, COMPACT_THRESHOLD_RATIO, max_tokens=65536) and compact_summary is None:
+        model = config.get("configurable", {}).get("model") if config else None
+        if model:
+            summary, recent = await compact_messages(messages, model, COMPACT_KEEP_RECENT)
+            result["compact_summary"] = summary
+            messages = recent
+            compact_summary = summary
 
     # Get skill summaries from config
     skill_summaries = []
@@ -58,7 +70,18 @@ async def observe_node(state: AgentState, config: dict = None) -> dict:
         if compact_summary:
             system_text = f"## 历史对话摘要\n{compact_summary}\n\n{system_text}"
 
-        new_messages = [SystemMessage(content=system_text)] + list(messages)
-        return {"messages": new_messages}
+        # Inject active skill instructions if a skill is activated (Fix 4)
+        if state.get("active_skill"):
+            skill = state["active_skill"]
+            skill_instructions = (
+                f"\n## 当前激活技能: {skill['name']}\n"
+                f"{skill['description']}\n"
+                f"允许的工具: {', '.join(skill['tools'])}"
+            )
+            system_text += skill_instructions
 
-    return {}
+        new_messages = [SystemMessage(content=system_text)] + list(messages)
+        result["messages"] = new_messages
+        return result
+
+    return result

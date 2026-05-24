@@ -1,6 +1,5 @@
 from pathlib import Path
 from fastapi import FastAPI
-from sqlalchemy import text as sa_text
 
 from src.db.engine import create_engine, init_db, async_session_factory
 from src.tools.registry import ToolRegistry
@@ -14,6 +13,7 @@ from src.models import load_model_config, get_routing_config, OpenAICompatProvid
 from src.memory.sqlite_provider import SqliteMemoryProvider
 from src.server.routers.session import router as session_router
 from src.server.routers.chat import router as chat_router
+from langgraph.checkpoint.sqlite import SqliteSaver
 from config.settings import DB_PATH, MODEL_CONFIG_PATH, SKILLS_CONFIG_PATH
 
 
@@ -27,36 +27,8 @@ def create_app(db_url: str | None = None):
         engine = create_engine(_db_url)
         await init_db(engine)
 
-        # Checkpoint tables for LangGraph
-        async with engine.begin() as conn:
-            await conn.execute(sa_text("""
-                CREATE TABLE IF NOT EXISTS checkpoints (
-                    thread_id TEXT NOT NULL,
-                    checkpoint_ns TEXT NOT NULL DEFAULT '',
-                    checkpoint_id TEXT NOT NULL,
-                    parent_checkpoint_id TEXT,
-                    type TEXT,
-                    checkpoint BLOB,
-                    metadata BLOB,
-                    PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)
-                )
-            """))
-            await conn.execute(sa_text("""
-                CREATE TABLE IF NOT EXISTS checkpoint_writes (
-                    thread_id TEXT NOT NULL,
-                    checkpoint_ns TEXT NOT NULL DEFAULT '',
-                    checkpoint_id TEXT NOT NULL,
-                    task_id TEXT NOT NULL,
-                    idx INTEGER NOT NULL,
-                    channel TEXT NOT NULL,
-                    type TEXT,
-                    value BLOB,
-                    PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id, task_id, idx)
-                )
-            """))
-
-        # Checkpoint saver via custom ainvoke config (no SqliteSaver needed)
-        app.state.checkpoint_saver = None
+        # Checkpoint saver (SqliteSaver handles table creation)
+        app.state.checkpoint_saver = SqliteSaver.from_conn_string(_db_url)
 
         # Tool Registry
         app.state.tool_registry = ToolRegistry()

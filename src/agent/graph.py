@@ -5,14 +5,10 @@ from src.agent.state import AgentState
 from src.agent.nodes.observe import observe_node
 from src.agent.nodes.think import think_node
 from src.agent.nodes.act import act_node
-from config.settings import MAX_LOOPS
 
 
 def route_after_think(state: AgentState) -> Literal["act", "__end__"]:
     if state.get("final_answer") is not None:
-        return "__end__"
-    if state.get("loop_count", 0) >= MAX_LOOPS:
-        state["final_answer"] = "达到最大循环次数(" + str(MAX_LOOPS) + ")，任务中断。已完成的部分已返回。"
         return "__end__"
     if state.get("tool_calls"):
         return "act"

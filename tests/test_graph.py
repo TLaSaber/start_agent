@@ -53,6 +53,8 @@ def test_graph_routing_tool_calls():
 
 
 def test_graph_routing_max_loops():
+    """max_loops is now handled in think_node, not route_after_think.
+    route_after_think routes on tool_calls/final_answer only."""
     from src.agent.graph import route_after_think
     from config.settings import MAX_LOOPS
     from src.agent.state import AgentState
@@ -69,5 +71,6 @@ def test_graph_routing_max_loops():
         "compact_summary": None,
     }
     result = route_after_think(state)
-    assert result == "__end__"
-    assert state["final_answer"] is not None
+    # Without max_loops check, routes to "act" because tool_calls exist
+    assert result == "act"
+    assert state["final_answer"] is None
