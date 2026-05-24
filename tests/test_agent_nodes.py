@@ -93,3 +93,34 @@ def test_should_archive_no_trigger():
 
     triggers = detect_archive_triggers("帮我读一下 README.md 文件")
     assert len(triggers) == 0
+
+
+def test_permission_check_low_risk_allowed():
+    from src.agent.nodes.act import check_permission
+
+    allowed, reason = check_permission("read_file", "low")
+    assert allowed is True
+    assert reason == ""
+
+
+def test_permission_check_high_risk_blocked():
+    from src.agent.nodes.act import check_permission
+
+    allowed, reason = check_permission("exec_shell", "high")
+    assert allowed is False
+    assert "高风险" in reason
+
+
+def test_permission_check_medium_allowed():
+    from src.agent.nodes.act import check_permission
+
+    allowed, reason = check_permission("write_file", "medium")
+    assert allowed is True
+
+
+def test_permission_check_critical_blocked():
+    from src.agent.nodes.act import check_permission
+
+    allowed, reason = check_permission("delete_system", "critical")
+    assert allowed is False
+    assert "特危" in reason
