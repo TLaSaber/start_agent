@@ -31,7 +31,7 @@ class SkillRegistry:
     @classmethod
     def load_from_yaml(cls, config_path: str | Path) -> "SkillRegistry":
         registry = cls()
-        with open(config_path, "r") as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f)
 
         for skill_data in raw.get("skills", []):

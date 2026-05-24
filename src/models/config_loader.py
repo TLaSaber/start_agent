@@ -17,7 +17,7 @@ def _resolve_env(value: str) -> str:
 
 
 def load_model_config(config_path: str | Path) -> dict[str, ProviderConfig]:
-    with open(config_path, "r") as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f)
 
     providers = {}
@@ -40,6 +40,6 @@ def load_model_config(config_path: str | Path) -> dict[str, ProviderConfig]:
 
 
 def get_routing_config(config_path: str | Path) -> dict:
-    with open(config_path, "r") as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f)
     return raw.get("routing", {})

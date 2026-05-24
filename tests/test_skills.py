@@ -32,7 +32,7 @@ skills:
     tools: ["exec_shell"]
     constraints: []
 """
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as f:
         f.write(yaml_content)
         yaml_path = f.name
 
