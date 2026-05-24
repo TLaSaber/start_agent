@@ -1,0 +1,88 @@
+<h2>LangGraph StateGraph 设计</h2>
+<p class="subtitle">State 定义 · 节点职责 · 条件路由 · 中止条件</p>
+
+<h3>1. AgentState（图状态）</h3>
+<div class="mockup">
+  <div class="mockup-header">State Schema</div>
+  <div class="mockup-body">
+    <pre style="font-size:12px;line-height:1.6;margin:0">
+class AgentState(TypedDict):
+    # ── 消息流 ──
+    messages: Annotated[list, add_messages]    # LangGraph 原生 reducer
+
+    # ── 会话标识 ──
+    session_id: str
+    user_id: str
+
+    # ── 上下文缓存 ──
+    recalled_memories: list[dict]              # recall_memory 的返回结果
+    active_skill: SkillDefinition | None       # 当前命中的技能定义
+
+    # ── 循环控制 ──
+    tool_calls: list[ToolCall]                 # Think 阶段产出的工具调用
+    loop_count: int                            # 防止无限循环
+    final_answer: str | None                   # 非 None 时图结束
+    </pre>
+  </div>
+</div>
+
+<h3>2. 节点与边</h3>
+<div class="mockup">
+  <div class="mockup-header">Graph 拓扑</div>
+  <div class="mockup-body">
+    <pre style="font-size:12px;line-height:1.7;margin:0">
+                    ┌──────────┐
+                    │  START   │
+                    └────┬─────┘
+                         │
+                    ┌────▼─────┐
+                    │ Observe  │  ① 加载会话历史 → ② recall_memory
+                    │   Node   │  ③ 注入 System Prompt → ④ 加载技能清单
+                    └────┬─────┘
+                         │
+                    ┌────▼─────┐
+                    │  Think   │  ① 调用 LLM (带 tools schema)
+                    │   Node   │  ② 解析响应: answer / tool_calls
+                    └────┬─────┘
+                         │
+                    ┌────▼─────┐
+                    │  Route   │  <b>条件边:</b>
+                    │  (cond)  │  · tool_calls 非空 → Act
+                    └─┬───┬───┘  · final_answer  → END
+                      │   │      · loop_count>N  → END (兜底)
+                      │   └──────────────┐
+                    ┌────▼─────┐          │
+                    │   Act    │  ① 权限检查(当前版本: 白名单放行)
+                    │   Node   │  ② 执行工具 → 结果回写 messages
+                    └────┬─────┘  ③ loop_count++
+                         │
+                         └──→ 回到 Observe (循环)
+    </pre>
+  </div>
+</div>
+
+<h3>3. 条件路由逻辑</h3>
+<div class="mockup">
+  <div class="mockup-header">Route 节点判定伪代码</div>
+  <div class="mockup-body">
+    <pre style="font-size:12px;line-height:1.6;margin:0">
+def route_after_think(state: AgentState) -> Literal["act", "__end__"]:
+    if state["final_answer"] is not None:
+        return "__end__"
+    if state["loop_count"] >= MAX_LOOPS:
+        state["final_answer"] = "达到最大循环次数，任务中断"
+        return "__end__"
+    if state["tool_calls"]:
+        return "act"
+    return "__end__"  # 无工具调用也无 final_answer，安全退出
+    </pre>
+  </div>
+</div>
+
+<h3>4. 为什么这样设计</h3>
+<div class="section">
+  <p><strong>Observe 独立成节点</strong> — 不是简单的"拼接上下文"，而是有逻辑的预处理步骤（记忆召回、技能匹配、会话压缩）。独立出来方便后续加功能，不影响 Think 和 Act。</p>
+  <p><strong>Think 只调用 LLM</strong> — 不混入工具执行逻辑。Think 产出的是"意图"（回答 or 调工具），Route 根据意图决定走向。符合单一职责。</p>
+  <p><strong>Act 包含权限检查</strong> — MVP 阶段权限用静态白名单（安全工具直接放行，危险工具拒绝）。后面替换为完整的风险矩阵，只改 Act 内部逻辑，图拓扑不变。</p>
+  <p><strong>loop_count 兜底</strong> — 防止 LLM 陷入无限工具调用循环。默认上限 15 次。</p>
+</div>

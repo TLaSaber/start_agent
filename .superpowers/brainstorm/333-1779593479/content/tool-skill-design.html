@@ -1,0 +1,152 @@
+<h2>工具与技能调度层</h2>
+<p class="subtitle">Tool 原子能力 · Skill 行为模式 · 注册发现 · 渐进式加载</p>
+
+<h3>1. Tool 定义与注册</h3>
+<div class="mockup">
+  <div class="mockup-header">Tool 基类</div>
+  <div class="mockup-body">
+    <pre style="font-size:12px;line-height:1.6;margin:0">
+class BaseTool(ABC):
+    name: str                           # 唯一标识, 如 "read_file"
+    description: str                    # LLM 可见的功能描述
+    parameters: dict                    # JSON Schema, 传给 LLM 的 function params
+    risk_level: Literal["low", "medium", "high", "critical"]
+
+    @abstractmethod
+    async def execute(self, **kwargs) -> ToolResult:
+        """执行工具，返回统一结果"""
+        ...
+
+class ToolResult(BaseModel):
+    success: bool
+    output: str                         # 给 LLM 看的文本输出
+    error: str | None
+    metadata: dict                      # 执行耗时、token 消耗等
+    </pre>
+  </div>
+</div>
+
+<h3>2. MVP 内置工具清单</h3>
+<div class="mockup">
+  <div class="mockup-header">首批内置工具 (足够办公自动化场景)</div>
+  <div class="mockup-body">
+    <table style="width:100%;font-size:12px;border-collapse:collapse;">
+      <tr style="background:#2a2a2a"><th style="padding:6px 10px;text-align:left">工具</th><th style="padding:6px 10px;text-align:left">功能</th><th style="padding:6px 10px;text-align:left">风险</th></tr>
+      <tr><td style="padding:6px 10px">read_file</td><td style="padding:6px 10px">读取文件内容</td><td style="padding:6px 10px;color:#4caf50">low</td></tr>
+      <tr style="background:#1a1a1a"><td style="padding:6px 10px">write_file</td><td style="padding:6px 10px">创建/覆盖文件</td><td style="padding:6px 10px;color:#ff9800">medium</td></tr>
+      <tr><td style="padding:6px 10px">list_dir</td><td style="padding:6px 10px">列出目录内容</td><td style="padding:6px 10px;color:#4caf50">low</td></tr>
+      <tr style="background:#1a1a1a"><td style="padding:6px 10px">search_file</td><td style="padding:6px 10px">按名称搜索文件</td><td style="padding:6px 10px;color:#4caf50">low</td></tr>
+      <tr><td style="padding:6px 10px">grep_content</td><td style="padding:6px 10px">文件内容正则搜索</td><td style="padding:6px 10px;color:#4caf50">low</td></tr>
+      <tr style="background:#1a1a1a"><td style="padding:6px 10px">exec_shell</td><td style="padding:6px 10px">执行系统命令</td><td style="padding:6px 10px;color:#f44336">high</td></tr>
+      <tr><td style="padding:6px 10px">http_request</td><td style="padding:6px 10px">发起 HTTP 请求</td><td style="padding:6px 10px;color:#ff9800">medium</td></tr>
+      <tr style="background:#1a1a1a"><td style="padding:6px 10px">db_query</td><td style="padding:6px 10px">执行只读 SQL 查询</td><td style="padding:6px 10px;color:#ff9800">medium</td></tr>
+    </table>
+    <p style="margin-top:10px;font-size:11px;color:#888;">risk_level 用于 Act 节点的权限白名单拦截</p>
+  </div>
+</div>
+
+<h3>3. Skill 定义</h3>
+<div class="section">
+  <p>Skill 本质是 <strong>提示词模板 + 工具组合 + 执行约束</strong> 的集合。它不直接执行，而是指导 LLM 如何组合使用工具。</p>
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">Skill 数据结构 & 示例</div>
+  <div class="mockup-body">
+    <pre style="font-size:12px;line-height:1.6;margin:0">
+class SkillDefinition(BaseModel):
+    name: str                    # "code-review"
+    summary: str                 # 一句话简介 (清单展示用)
+    description: str             # 完整提示词 (按需加载)
+    tools: list[str]             # 该技能推荐的工具白名单
+    constraints: list[str]       # 执行约束
+    risk_override: dict[str, RiskLevel] | None  # 可覆盖工具默认风险级别
+
+# 示例：代码审查技能
+code_review_skill = SkillDefinition(
+    name="code-review",
+    summary="对代码变更进行审查，输出问题和改进建议",
+    description="""你是代码审查专家。按以下步骤执行：
+1. 使用 grep_content 找到变更的函数和类
+2. 使用 read_file 读取完整文件上下文
+3. 从以下维度审查：安全性、性能、可维护性、错误处理
+4. 输出结构化的审查报告，包含严重程度分级""",
+    tools=["read_file", "grep_content", "search_file"],
+    constraints=["不得修改任何文件", "不得执行代码"],
+)
+    </pre>
+  </div>
+</div>
+
+<h3>4. 渐进式加载与调度</h3>
+<div class="mockup">
+  <div class="mockup-header">Agent Loop 中的调度流程</div>
+  <div class="mockup-body">
+    <pre style="font-size:12px;line-height:1.7;margin:0">
+Observe 阶段:
+  ┌─────────────────────────────────────────────┐
+  │ 1. 注入 Skill 清单 (名称 + 一句话简介)       │
+  │    → System Prompt: "可用技能: code-review,   │
+  │       data-analyze, doc-generator..."        │
+  └─────────────────────────────────────────────┘
+                      │
+Think 阶段:
+  ┌─────────────────────────────────────────────┐
+  │ 2. LLM 根据用户任务，决定是否调用技能         │
+  │    → 若命中: 输出 skill_activate="code-review" │
+  │    → 若未命中: 直接选择原子工具               │
+  └─────────────────────────────────────────────┘
+                      │
+Observe (下一轮):
+  ┌─────────────────────────────────────────────┐
+  │ 3. 检测到 skill_activate → 加载完整 Skill    │
+  │    → 注入完整提示词 + 工具白名单 + 约束        │
+  │    → 注入 active_skill 到 state              │
+  └─────────────────────────────────────────────┘
+                      │
+Act 阶段:
+  ┌─────────────────────────────────────────────┐
+  │ 4. 执行前检查: 工具是否在 Skill 白名单内？    │
+  │    → 不在白名单 → 拒绝执行                    │
+  │    → 在白名单 → 检查风险级别 → 执行           │
+  └─────────────────────────────────────────────┘
+    </pre>
+  </div>
+</div>
+
+<h3>5. ToolRegistry 注册发现</h3>
+<div class="mockup">
+  <div class="mockup-header">自动注册机制</div>
+  <div class="mockup-body">
+    <pre style="font-size:12px;line-height:1.6;margin:0">
+class ToolRegistry:
+    """启动时自动扫描注册所有 BaseTool 子类"""
+
+    def __init__(self):
+        self._tools: dict[str, BaseTool] = {}
+
+    def discover(self, tool_dir: str = "agent/tools"):
+        """扫描 tool_dir 下的所有 .py 文件，自动注册 BaseTool 子类"""
+        for cls in walk_subclasses(BaseTool):
+            instance = cls()
+            self._tools[instance.name] = instance
+
+    def get_llm_tools(self) -> list[dict]:
+        """生成 OpenAI 兼容的 tools/functions 参数"""
+        return [
+            {"type": "function", "function": {
+                "name": t.name,
+                "description": t.description,
+                "parameters": t.parameters,
+            }}
+            for t in self._tools.values()
+        ]
+
+    def execute(self, name: str, **kwargs) -> ToolResult:
+        tool = self._tools.get(name)
+        if not tool:
+            raise ToolNotFoundError(name)
+        return await tool.execute(**kwargs)
+    </pre>
+  </div>
+</div>

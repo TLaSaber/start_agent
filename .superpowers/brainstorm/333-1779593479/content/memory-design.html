@@ -1,0 +1,109 @@
+<h2>记忆管理层</h2>
+<p class="subtitle">MemoryProvider 抽象 · 短期/长期记忆 · 归档策略 · 召回机制</p>
+
+<h3>1. MemoryProvider 接口</h3>
+<div class="mockup">
+  <div class="mockup-header">抽象接口定义</div>
+  <div class="mockup-body">
+    <pre style="font-size:12px;line-height:1.6;margin:0">
+class MemoryProvider(ABC):
+    """记忆存储抽象 —— MVP 用 SQLite 实现，后续可切向量库"""
+
+    async def archive(self, entry: MemoryEntry) -> str:
+        """归档一条记忆，返回 memory_id"""
+
+    async def recall(self, query: str, top_k: int = 5) -> list[MemoryEntry]:
+        """语义/关键词召回相关记忆"""
+
+    async def delete(self, memory_id: str) -> bool:
+        """删除一条记忆"""
+
+    async def list_by_user(self, user_id: str, limit: int = 50) -> list[MemoryEntry]:
+        """列出用户的所有记忆"""
+
+class MemoryEntry(BaseModel):
+    id: str
+    user_id: str
+    session_id: str | None      # 来源会话
+    content: str                 # 记忆内容
+    category: str                # "preference" | "knowledge" | "fact"
+    source: str                  # "auto_archive" | "user_command" | "rule_match"
+    created_at: datetime
+    ttl_days: int | None         # 过期时间，None = 永久
+    </pre>
+  </div>
+</div>
+
+<h3>2. 短期记忆 vs 长期记忆</h3>
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">短期记忆（自动）</div>
+    <div class="mockup-body">
+      <p>就是当前会话上下文窗口内的消息，由 <strong>Observe 节点自动注入</strong>，无需调用任何接口。</p>
+      <p>Compact 触发后，早期对话被摘要替代，但摘要本身也是短期记忆的一部分。</p>
+      <p style="margin-top:10px;color:#888;">实现：直接读 state["messages"]</p>
+    </div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-header">长期记忆（归档+查询）</div>
+    <div class="mockup-body">
+      <p>跨会话持久化存储。通过 <strong>三层控制</strong> 决定是否归档：</p>
+      <ol>
+        <li><strong>系统默认规则</strong>：偏好类永久归档，事实类 30 天</li>
+        <li><strong>用户指令</strong>："记住这个" → 强制归档</li>
+        <li><strong>智能体判断</strong>：Think 阶段可选标记重要信息归档</li>
+      </ol>
+      <p style="margin-top:10px;color:#888;">实现：调用 memory_provider.archive()</p>
+    </div>
+  </div>
+</div>
+
+<h3>3. 记忆在 Agent Loop 中的流转</h3>
+<div class="mockup">
+  <div class="mockup-header">Observe → Think → 归档判断</div>
+  <div class="mockup-body">
+    <pre style="font-size:12px;line-height:1.7;margin:0">
+┌─ Observe ─────────────────────────────────────────┐
+│  1. 加载 messages (短期记忆，自动)                  │
+│  2. recall_memory(user_query, top_k=3)             │
+│     → 匹配到的长期记忆注入 SystemPrompt             │
+│     → "用户偏好用 tab 缩进"、"项目 X 使用 FastAPI"  │
+└───────────────────────────────────────────────────┘
+                         │
+┌─ Think ──────────────────────────────────────────┐
+│  LLM 推理时可以看到召回的记忆作为参考               │
+└───────────────────────────────────────────────────┘
+                         │
+┌─ 归档判断 (Think 之后, Act 之前) ─────────────────┐
+│  · 用户说了"记住..."？ → 强制归档                  │
+│  · 用户表达了新偏好？ → 匹配规则                      │
+│  · auto_archive 开启且 LLM 标记了重要信息？ → 归档  │
+└───────────────────────────────────────────────────┘
+    </pre>
+  </div>
+</div>
+
+<h3>4. MVP 实现策略</h3>
+<div class="section">
+  <p><strong>MVP 阶段用 SQLite + 关键词匹配</strong>。recall() 内部先用简单的 LIKE/INSTR 做关键词召回，按时间降序排序。后续需要语义搜索时，实现一个新的 VectorMemoryProvider（对接向量库），Agent Runtime 代码零改动。</p>
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">SQLite 表结构</div>
+  <div class="mockup-body">
+    <pre style="font-size:12px;line-height:1.6;margin:0">
+CREATE TABLE memories (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    session_id TEXT,
+    content TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'fact',
+    source TEXT NOT NULL DEFAULT 'auto_archive',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ttl_days INTEGER
+);
+CREATE INDEX idx_memories_user ON memories(user_id);
+CREATE INDEX idx_memories_content ON memories(content);
+    </pre>
+  </div>
+</div>

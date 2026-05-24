@@ -1,0 +1,15 @@
+providers:
+  deepseek:
+    type: openai_compat
+    api_base: "${DEEPSEEK_API_BASE:https://api.deepseek.com/v1}"
+    api_key: "${DEEPSEEK_API_KEY}"
+    default_model: "deepseek-v3"
+    available_models:
+      - name: "deepseek-v3"
+        max_tokens: 65536
+        capabilities: [chat, function_calling]
+
+routing:
+  main_agent:
+    provider: deepseek
+    model: deepseek-v3

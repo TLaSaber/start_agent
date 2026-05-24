@@ -1,0 +1,102 @@
+<h2>项目目录结构</h2>
+<p class="subtitle">Python Package 组织 · 模块边界 · 配置与测试分离</p>
+
+<div class="mockup">
+  <div class="mockup-header">目录树</div>
+  <div class="mockup-body">
+    <pre style="font-size:12px;line-height:1.7;margin:0">
+pyagent/
+├── pyproject.toml              # 项目元数据 + 依赖 (uv/poetry)
+├── config/
+│   ├── model.yaml              # 模型配置 (防腐层)
+│   ├── skills.yaml             # 技能定义清单
+│   └── settings.py             # 全局配置 (DB路径, 会话限制等)
+│
+├── src/
+│   ├── server/                 # 接入层: FastAPI
+│   │   ├── __init__.py
+│   │   ├── app.py              # FastAPI 应用创建与生命周期
+│   │   ├── routers/
+│   │   │   ├── __init__.py
+│   │   │   ├── chat.py         # POST /chat
+│   │   │   └── session.py      # Session CRUD 端点
+│   │   └── schemas/
+│   │       ├── __init__.py
+│   │       ├── request.py      # ChatRequest, 等
+│   │       └── response.py     # ChatResponse, SessionResponse
+│   │
+│   ├── agent/                  # Agent Runtime: LangGraph 核心
+│   │   ├── __init__.py
+│   │   ├── graph.py            # StateGraph 构建: 节点 + 边 + 条件路由
+│   │   ├── state.py            # AgentState TypedDict 定义
+│   │   ├── nodes/
+│   │   │   ├── __init__.py
+│   │   │   ├── observe.py      # 上下文加载 + 记忆召回 + Compact
+│   │   │   ├── think.py        # LLM 推理 + 工具选择 + 归档判断
+│   │   │   └── act.py          # 工具执行 + 权限白名单
+│   │   └── compact.py          # 上下文压缩逻辑
+│   │
+│   ├── tools/                  # 能力层: 工具
+│   │   ├── __init__.py
+│   │   ├── base.py             # BaseTool + ToolResult
+│   │   ├── registry.py         # ToolRegistry 自动发现
+│   │   ├── builtin/
+│   │   │   ├── __init__.py
+│   │   │   ├── file_ops.py     # read_file, write_file, list_dir
+│   │   │   ├── search.py       # search_file, grep_content
+│   │   │   ├── shell.py        # exec_shell
+│   │   │   ├── http.py         # http_request
+│   │   │   └── database.py     # db_query
+│   │   └── extension/          # 扩展工具 (后续按需加载)
+│   │       └── __init__.py
+│   │
+│   ├── skills/                 # 能力层: 技能
+│   │   ├── __init__.py
+│   │   ├── registry.py         # SkillRegistry: 清单加载 + 按需获取
+│   │   └── definitions/
+│   │       ├── __init__.py
+│   │       ├── code_review.py
+│   │       └── data_analyze.py
+│   │
+│   ├── memory/                 # 能力层: 记忆
+│   │   ├── __init__.py
+│   │   ├── provider.py         # MemoryProvider 抽象接口
+│   │   ├── sqlite_provider.py  # MVP 实现: SQLite 关键词匹配
+│   │   └── models.py           # MemoryEntry ORM
+│   │
+│   ├── models/                 # 能力层: 模型防腐
+│   │   ├── __init__.py
+│   │   ├── provider.py         # ModelProvider 抽象接口
+│   │   └── openai_compat.py    # OpenAICompatProvider 实现
+│   │
+│   └── db/                     # 基础设施层
+│       ├── __init__.py
+│       ├── engine.py           # SQLAlchemy engine + session factory
+│       └── models.py           # Session ORM 模型
+│
+├── tests/
+│   ├── test_graph.py           # StateGraph 单元测试
+│   ├── test_nodes/             # 节点测试
+│   ├── test_tools/             # 工具测试
+│   ├── test_memory/            # 记忆测试
+│   └── test_api/               # API 集成测试
+│
+└── docs/
+    ├── agent架构.md             # 原始架构文档
+    └── superpowers/
+        └── specs/              # 设计文档存放位置
+    </pre>
+  </div>
+</div>
+
+<h3>模块边界规则</h3>
+<div class="section">
+  <table style="width:100%;font-size:12px;border-collapse:collapse;">
+    <tr style="background:#2a2a2a"><th style="padding:6px 10px;text-align:left">模块</th><th style="padding:6px 10px;text-align:left">可以 import</th><th style="padding:6px 10px;text-align:left">不可以 import</th></tr>
+    <tr><td style="padding:6px 10px"><code>server/</code></td><td style="padding:6px 10px">agent, tools, models, memory, db</td><td style="padding:6px 10px">—</td></tr>
+    <tr style="background:#1a1a1a"><td style="padding:6px 10px"><code>agent/</code></td><td style="padding:6px 10px">tools, models, memory, db</td><td style="padding:6px 10px;color:#f44336">server</td></tr>
+    <tr><td style="padding:6px 10px"><code>tools/</code></td><td style="padding:6px 10px">db (仅 sqlite 工具)</td><td style="padding:6px 10px;color:#f44336">server, agent</td></tr>
+    <tr style="background:#1a1a1a"><td style="padding:6px 10px"><code>memory/</code></td><td style="padding:6px 10px">db</td><td style="padding:6px 10px;color:#f44336">server, agent</td></tr>
+    <tr><td style="padding:6px 10px"><code>models/</code></td><td style="padding:6px 10px">— (纯配置驱动)</td><td style="padding:6px 10px;color:#f44336">server, agent, db</td></tr>
+  </table>
+</div>

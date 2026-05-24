@@ -1,0 +1,98 @@
+<h2>会话与上下文管理</h2>
+<p class="subtitle">Session 生命周期 · LangGraph Checkpoint 持久化 · Compact 压缩</p>
+
+<h3>1. 核心设计决策：复用 LangGraph Checkpoint</h3>
+<div class="section">
+  <p>LangGraph 内置的 <code>SqliteSaver</code> / <code>PostgresSaver</code> 天然支持图的快照持久化和恢复。<strong>我们把 Session 持久化与 Checkpoint 合一</strong>：一个 session 对应一个 thread_id，每次 graph 执行完自动落盘。会话恢复 = 从 checkpoint 重放。</p>
+</div>
+
+<h3>2. Session 数据模型</h3>
+<div class="mockup">
+  <div class="mockup-header">Session ORM 模型 (仅存元数据)</div>
+  <div class="mockup-body">
+    <pre style="font-size:12px;line-height:1.6;margin:0">
+class Session(Base):
+    __tablename__ = "sessions"
+
+    id: str            # UUID, 同时用作 LangGraph thread_id
+    user_id: str       # 用户标识
+    title: str         # 会话标题 (首条消息截取)
+    status: str        # "active" | "closed"
+    message_count: int # 消息总数 (冗余字段，方便列表展示)
+    created_at: datetime
+    updated_at: datetime
+
+    # 完整的消息历史存在 LangGraph checkpoint 里
+    # 元数据表只负责列表查询和生命周期管理
+    </pre>
+  </div>
+</div>
+
+<h3>3. 会话生命周期</h3>
+<div class="mockup">
+  <div class="mockup-header">状态流转</div>
+  <div class="mockup-body">
+    <pre style="font-size:12px;line-height:1.7;margin:0">
+  POST /chat              POST /chat              POST /session/close
+  (新会话,无session_id)    (已有session_id)        (显式关闭)
+       │                      │                      │
+  ┌────▼────┐           ┌────▼────┐            ┌────▼────┐
+  │ 创建     │           │ 恢复     │            │ 关闭     │
+  │Session + │──active──→│Checkpoint│──active──→│status=   │
+  │thread_id │           │重放+继续 │            │"closed"  │
+  └─────────┘           └─────────┘            └─────────┘
+    </pre>
+  </div>
+</div>
+
+<h3>4. 上下文压缩 (Compact)</h3>
+<div class="section">
+  <p>在 <strong>Observe 节点</strong>中，加载消息历史后检查 token 数（用 tiktoken 估算）。当历史 token 超过阈值（如 80% 上下文窗口），触发压缩：</p>
+  <ol>
+    <li>取最近 N 轮对话 <strong>之前</strong>的所有消息，调用 LLM 生成摘要</li>
+    <li>摘要作为 <code>SystemMessage</code> 注入上下文开头</li>
+    <li>早期消息从上下文中移除，<strong>但 Checkpoint 中的全量历史不删</strong></li>
+    <li>摘要缓存到 state 中，避免每轮重复压缩</li>
+  </ol>
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">Compact 流程 (Observe 节点内部)</div>
+  <div class="mockup-body">
+    <pre style="font-size:12px;line-height:1.6;margin:0">
+def observe(state):
+    messages = state["messages"]  # 来自 checkpoint 的全量历史
+
+    if estimate_tokens(messages) > COMPACT_THRESHOLD:
+        boundary = find_compact_boundary(messages, keep_recent=6)
+        old_messages = messages[:boundary]
+        recent_messages = messages[boundary:]
+
+        # 只在摘要为空时调用 LLM (避免重复压缩)
+        if not state.get("compact_summary"):
+            summary = llm_compact(old_messages)
+            state["compact_summary"] = summary
+
+        # 组装精简上下文: [摘要] + [最近6轮]
+        context = [SystemMessage(summary)] + recent_messages
+    else:
+        context = messages
+
+    # 继续: 注入 system prompt, recall memory...
+    </pre>
+  </div>
+</div>
+
+<h3>5. API 设计</h3>
+<div class="mockup">
+  <div class="mockup-header">会话相关端点</div>
+  <div class="mockup-body">
+    <pre style="font-size:12px;line-height:1.6;margin:0">
+POST   /chat              # 发送消息 (body: {session_id?, user_id, message})
+GET    /session/{id}      # 查询会话详情 (metadata + messages)
+GET    /session/list      # 用户会话列表 (?user_id=xxx)
+POST   /session/{id}/close # 关闭会话
+DELETE /session/{id}      # 删除会话 + checkpoint 清理
+    </pre>
+  </div>
+</div>
