@@ -1,1 +1,1 @@
-# Server package - initialized when app is created
+from src.server.app import create_app, app
